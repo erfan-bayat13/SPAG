@@ -145,7 +145,7 @@ def main():
             batch_queries = [{
                 "query": convert_game_history_to_query(
                     game['history'],
-                    target_word=f"{game['target_word']} - {game['explanation']}",
+                    target_content=f"{game['target_word']} - {game['explanation']}",
                     max_turns=game['max_turns']
                 ),
                 "query_id": game['target_word'],

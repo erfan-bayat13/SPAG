@@ -26,32 +26,40 @@ DEFAULT_BOS_TOKEN = "<s>"
 DEFAULT_UNK_TOKEN = "<unk>"
 
 GAME_RULE_PROMPTS = [
-'''Play the game of Counterspeech. In this game, there are two players, an attacker and a defender.
+'''This is an Adversarial Taboo game focused on hate speech mitigation. There are two players: an attacker and a defender.
 
-At the beginning, the attacker is given a word and its explanation that contain harmful content, which the defender is not informed of. The task of the attacker is to hint at this content indirectly, without ever stating it explicitly.
+The attacker receives a word and its hateful context/explanation. Like in Taboo, the attacker must get the defender to figure out this word WITHOUT ever using it directly. The attacker should provide clever hints that lead to the word.
 
-The defender's role is to identify the harmful content while simultaneously providing effective counterspeech. When the defender believes they have identified the content, they should say "I think the hate speech is: [their guess]. My counterspeech is: [their response]". The defender wins if they correctly identify the content AND provide appropriate counterspeech. The defender only gets one chance to guess.
+The defender has two tasks:
+1. Figure out what the hate speech word is based on the attacker's hints
+2. Create counterspeech that directly addresses the specific hateful word and its context. The counterspeech must reframe the targeted concept in a factual, respectful way that directly counters the hate speech's implications.
 
-The game has {max_turns} turns. If nobody wins during {max_turns} turns, there is a tie.
+When the defender thinks they know the word, they must say: "I think the hate speech is: [word]. My counterspeech is: [response that specifically addresses this word and provides a better way to discuss the underlying concept]". The defender wins if they correctly identify the word AND provide counterspeech that specifically addresses that word's harmful implications.
+
+The game has {max_turns} turns. If no one wins within {max_turns} turns, it's a tie.
 ''',
-'''Engage in the strategic exercise of Counterspeech, a game involving two participants: one assumes the role of the attacker, while the other is the defender.
+'''Welcome to a hate speech mitigation variant of Adversarial Taboo. Two players participate: an attacker and a defender.
 
-Initially, the attacker is privately given a target word and its context containing harmful speech, which remains unknown to the defender. The attacker's objective is to provide indirect hints about this content, while strictly avoiding any direct reproduction of harmful language.
+The attacker knows a specific word and its hateful context. Following Taboo rules, the attacker must lead the defender to discover this word through indirect hints and clues, but can never say the word itself.
 
-The defender's mission is twofold: to deduce the harmful content and to craft effective counterspeech. When ready, the defender should declare "I think the hate speech is: [their guess]. My counterspeech is: [their response]". Victory requires both accurate identification AND constructive counterspeech. The defender has only one opportunity to make their guess.
+The defender must:
+1. Deduce the hate speech word from the attacker's hints
+2. Provide counterspeech that specifically addresses this word by reframing its targeted concept in factual, respectful terms. The counterspeech should directly counter the specific implications of that word, not just give general positive messages.
 
-The game unfolds over {max_turns} rounds. Should neither player succeed within these turns, the game ends in a draw.
+To make a guess, the defender must declare: "I think the hate speech is: [word]. My counterspeech is: [response that specifically reframes how we should discuss the concept targeted by this word]". Victory requires both correct word identification AND counterspeech that meaningfully addresses that specific word's harmful implications.
+
+The game proceeds for {max_turns} turns before ending in a tie if unresolved.
 '''
 ]
 
 INSTRUCT_PROMPTS = {
-    "attacker": '''\n\n### Instruction: You are the attacker. The harmful word is: `{target_word}`. Its explanation is: `{target_explanation}`. Remember, do not use this word directly. Provide indirect hints for the current turn.\n\n### Response:''', 
-    "defender": '''\n\n### Instruction: You are the defender. Analyze the conversation to identify the harmful content. When ready, respond with "I think the hate speech is: [your guess]. My counterspeech is: [your response]".\n\n### Response:'''
+    "attacker": '''\n\n### Instruction: You are the attacker. The word is: `{target_word}`. Its hateful context: `{target_explanation}`. Like in Taboo, get the defender to figure out this word through hints, but never use it directly.\n\n### Response:''', 
+    "defender": '''\n\n### Instruction: You are the defender. Using the attacker's hints, try to identify the hate speech word. When you think you know it, respond with "I think the hate speech is: [word]. My counterspeech is: [your response that specifically addresses this word by reframing its targeted concept in factual, respectful terms - explain how we should discuss this specific concept instead]".\n\n### Response:'''
 }
 
 PLAYER_INSTRUCT_PROMPTS = {
-    "attacker": "You are the attacker. The harmful word is: `{target_word}`. Its explanation is: `{target_explanation}`. Remember, do not use this word directly. Provide indirect hints for the current turn.", 
-    "defender": "You are the defender. Analyze the conversation to identify the harmful content. When ready, respond with 'I think the hate speech is: [your guess]. My counterspeech is: [your response]'."
+    "attacker": "You are the attacker. The word is: `{target_word}`. Its hateful context: `{target_explanation}`. Like in Taboo, get the defender to figure out this word through hints, but never use it directly.", 
+    "defender": "You are the defender. Using the attacker's hints, try to identify the hate speech word. When you think you know it, respond with 'I think the hate speech is: [word]. My counterspeech is: [your response that specifically addresses this word by reframing its targeted concept in factual, respectful terms - explain how we should discuss this specific concept instead]'."
 }
 
 def parse_target_content(target_content: str) -> tuple[str, str]:
