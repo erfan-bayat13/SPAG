@@ -290,13 +290,13 @@ class RAGRetriever:
         
     def semantic_search(self, query_text: str, limit_per_layer: int = 5, similarity_threshold: float = 0.5) -> List[Dict]:
         """
-        Perform semantic search on hate content using embeddings.
+        Perform semantic search on hate content using vector search capabilities.
         Searches both debate-based content (layer 1) and synthetic content (layer 2).
         
         Args:
             query_text: The search query text
             limit_per_layer: Maximum number of results to return per layer
-            similarity_threshold: Minimum cosine similarity score (0-1) for results
+            similarity_threshold: Minimum similarity score (0-1) for results
             
         Returns:
             List of matching hate content with similarity scores, ordered by relevance
@@ -306,25 +306,30 @@ class RAGRetriever:
             from sentence_transformers import SentenceTransformer
             self.model = SentenceTransformer('all-MiniLM-L6-v2')
         
+        # Ensure vector indices exist (should be done during initialization/setup)
+        #self._ensure_vector_indices()
+        
         # Generate embedding for the query text
         query_embedding = self.model.encode(query_text).tolist()
-        query_embedding_str = json.dumps(query_embedding)
+        embeddings_str = ",".join([str(x) for x in query_embedding])
         
-        # Layer 1: Search in debate-based hate content
-        layer1_query = """
-        MATCH (hp:HateParagraph)-[:CONTAINS]->(hc:HateContent)
-        WHERE (hp.is_synthetic IS NULL OR hp.is_synthetic = false)
-        AND hc.embedding IS NOT NULL
-        
-        // Calculate cosine similarity
-        WITH hp, hc, gds.similarity.cosine($query_embedding, hc.embedding) AS similarity
+        # Layer 1: Search in debate-based hate content using vector search
+        # We request more results from vector search to ensure we have enough after filtering
+        layer1_query = f"""
+        CALL vector_search.search('hate_content_embedding_index', $search_limit, [{embeddings_str}]) 
+        YIELD node, similarity
+        WITH node AS hc, similarity
         WHERE similarity >= $threshold
+        
+        // Get parent paragraph and ensure it's not synthetic
+        MATCH (hp:HateParagraph)-[:CONTAINS]->(hc)
+        WHERE (hp.is_synthetic IS NULL OR hp.is_synthetic = false)
         
         // Get related nodes
         OPTIONAL MATCH (hp)-[:TALKS_ABOUT]->(t:Topic)
         OPTIONAL MATCH (hp)-[:COUNTERED_WITH]->(cp:CounterParagraph)
         
-        // Aggregate results at paragraph level
+        // Aggregate results at paragraph level (in case multiple sentences match)
         WITH hp, t, cp, MAX(similarity) AS max_similarity
         
         RETURN hp.id AS id, 
@@ -336,24 +341,25 @@ class RAGRetriever:
                max_similarity AS similarity_score,
                1 AS layer
         ORDER BY similarity_score DESC
-        LIMIT $limit
+        LIMIT $result_limit
         """
         
-        # Layer 2: Search in synthetic hate content
-        layer2_query = """
-        MATCH (hp:HateParagraph)-[:CONTAINS]->(hc:HateContent)
-        WHERE hp.is_synthetic = true
-        AND hc.embedding IS NOT NULL
-        
-        // Calculate cosine similarity
-        WITH hp, hc, gds.similarity.cosine($query_embedding, hc.embedding) AS similarity
+        # Layer 2: Search in synthetic hate content using vector search
+        layer2_query = f"""
+        CALL vector_search.search('hate_content_embedding_index', $search_limit, [{embeddings_str}]) 
+        YIELD node, similarity
+        WITH node AS hc, similarity
         WHERE similarity >= $threshold
+        
+        // Get parent paragraph and ensure it's synthetic
+        MATCH (hp:HateParagraph)-[:CONTAINS]->(hc)
+        WHERE hp.is_synthetic = true
         
         // Get related nodes
         OPTIONAL MATCH (hp)-[:TALKS_ABOUT]->(t:Topic)
         OPTIONAL MATCH (hp)-[:COUNTERED_WITH]->(cp:CounterParagraph)
         
-        // Aggregate results at paragraph level
+        // Aggregate results at paragraph level (in case multiple sentences match)
         WITH hp, t, cp, MAX(similarity) AS max_similarity
         
         RETURN hp.id AS id, 
@@ -365,14 +371,18 @@ class RAGRetriever:
                max_similarity AS similarity_score,
                2 AS layer
         ORDER BY similarity_score DESC
-        LIMIT $limit
+        LIMIT $result_limit
         """
+        
+        # We request more from the vector search to ensure we have enough after filtering
+        # A multiplier of 3 is a reasonable starting point
+        search_limit = limit_per_layer * 3
         
         # Execute queries
         params = {
-            "query_embedding": query_embedding,
             "threshold": similarity_threshold,
-            "limit": limit_per_layer
+            "search_limit": search_limit,
+            "result_limit": limit_per_layer
         }
         
         try:
@@ -385,26 +395,34 @@ class RAGRetriever:
             return all_results
         except Exception as e:
             print(f"Error in semantic search: {e}")
-            
-            # If cosine similarity function is not available, try a simpler approach
-            # This fallback doesn't use embeddings but provides results based on topic
-            fallback_query = """
-            MATCH (hp:HateParagraph)-[:TALKS_ABOUT]->(t:Topic)
-            WHERE toLower(t.name) CONTAINS toLower($query_text)
-            OPTIONAL MATCH (hp)-[:COUNTERED_WITH]->(cp:CounterParagraph)
-            
-            RETURN hp.id AS id, 
-                   hp.content AS content,
-                   t.name AS topic,
-                   hp.quality_score AS quality_score,
-                   cp.id AS counter_id, 
-                   cp.content AS counter_content,
-                   1.0 AS similarity_score,
-                   CASE WHEN hp.is_synthetic = true THEN 2 ELSE 1 END AS layer
-            LIMIT $limit
+
+            syntax_search_results = self._syntax_search_v2(query_text, limit_per_layer)
+            if syntax_search_results:
+                return syntax_search_results
+                
+    def _ensure_vector_indices(self):
+        """
+        Ensure that vector indices exist for hate content embeddings.
+        This should be called once during initialization or setup.
+        """
+        try:
+            # Check if index exists
+            check_query = """
+            SHOW INDEX INFO
             """
+            indices = list(self.memgraph.execute_and_fetch(check_query))
             
-            fallback_params = {"query_text": query_text, "limit": limit_per_layer * 2}
-            fallback_results = list(self.memgraph.execute_and_fetch(fallback_query, fallback_params))
+            # Look for our index in the returned indices
+            index_exists = any(index.get('name') == 'hate_content_embedding_index' for index in indices)
             
-            return fallback_results
+            if not index_exists:
+                # Create vector index for HateContent embeddings
+                create_index_query = """
+                CREATE VECTOR INDEX hate_content_embedding_index ON :HateContent(embedding) 
+                WITH CONFIG {"dimension": 384, "capacity": 1000, "metric": "cos"};
+                """
+                self.memgraph.execute(create_index_query)
+                print("Created vector index for HateContent embeddings")
+        except Exception as e:
+            print(f"Warning: Could not ensure vector indices: {e}")
+            print("Semantic search will fall back to alternative methods if vector search fails")
