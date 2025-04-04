@@ -259,7 +259,7 @@ class RAGRetriever:
         OPTIONAL MATCH (hp)-[:TALKS_ABOUT]->(t:Topic)
         OPTIONAL MATCH (hp)-[:COUNTERED_WITH]->(cp:CounterParagraph)
         
-        WITH hp, t, cp, 
+        WITH DISTINCT hp, t, cp, 
              {0} AS relevance_score
         
         RETURN hp.id AS id, 
@@ -284,9 +284,19 @@ class RAGRetriever:
         layer2_results = list(self.memgraph.execute_and_fetch(layer2_query, params))
         
         # Combine results, with layer 1 first
-        all_results = layer1_results + layer2_results
+        combined_results = layer1_results + layer2_results
         
-        return all_results
+        # Additional Python-side deduplication (as a safeguard)
+        seen_ids = set()
+        unique_results = []
+        
+        for result in combined_results:
+            paragraph_id = result['id']
+            if paragraph_id not in seen_ids:
+                seen_ids.add(paragraph_id)
+                unique_results.append(result)
+        
+        return unique_results
         
     def semantic_search(self, query_text: str, limit_per_layer: int = 5, similarity_threshold: float = 0.5) -> List[Dict]:
         """
@@ -307,7 +317,7 @@ class RAGRetriever:
             self.model = SentenceTransformer('all-MiniLM-L6-v2')
         
         # Ensure vector indices exist (should be done during initialization/setup)
-        #self._ensure_vector_indices()
+        self._ensure_vector_indices()
         
         # Generate embedding for the query text
         query_embedding = self.model.encode(query_text).tolist()
@@ -330,7 +340,8 @@ class RAGRetriever:
         OPTIONAL MATCH (hp)-[:COUNTERED_WITH]->(cp:CounterParagraph)
         
         // Aggregate results at paragraph level (in case multiple sentences match)
-        WITH hp, t, cp, MAX(similarity) AS max_similarity
+        // Use DISTINCT to ensure each paragraph appears only once
+        WITH DISTINCT hp, t, cp, MAX(similarity) AS max_similarity
         
         RETURN hp.id AS id, 
                hp.content AS content,
@@ -360,7 +371,8 @@ class RAGRetriever:
         OPTIONAL MATCH (hp)-[:COUNTERED_WITH]->(cp:CounterParagraph)
         
         // Aggregate results at paragraph level (in case multiple sentences match)
-        WITH hp, t, cp, MAX(similarity) AS max_similarity
+        // Use DISTINCT to ensure each paragraph appears only once
+        WITH DISTINCT hp, t, cp, MAX(similarity) AS max_similarity
         
         RETURN hp.id AS id, 
                hp.content AS content,
@@ -392,14 +404,57 @@ class RAGRetriever:
             # Combine results with layer 1 first
             all_results = layer1_results + layer2_results
             
-            return all_results
+            # Additional Python filtering to ensure no duplicate paragraphs
+            # This is a backup in case DISTINCT in Cypher doesn't work perfectly
+            seen_ids = set()
+            unique_results = []
+            
+            for result in all_results:
+                paragraph_id = result['id']
+                if paragraph_id not in seen_ids:
+                    seen_ids.add(paragraph_id)
+                    unique_results.append(result)
+            
+            return unique_results
+        
         except Exception as e:
             print(f"Error in semantic search: {e}")
-
-            syntax_search_results = self._syntax_search_v2(query_text, limit_per_layer)
-            if syntax_search_results:
-                return syntax_search_results
-                
+            
+            # If vector search is not available, fall back to topic-based search
+            fallback_query = """
+            MATCH (hp:HateParagraph)-[:TALKS_ABOUT]->(t:Topic)
+            WHERE toLower(t.name) CONTAINS toLower($query_text)
+            OPTIONAL MATCH (hp)-[:COUNTERED_WITH]->(cp:CounterParagraph)
+            
+            // Use DISTINCT to ensure each paragraph appears only once
+            WITH DISTINCT hp, t, cp
+            
+            RETURN hp.id AS id, 
+                   hp.content AS content,
+                   t.name AS topic,
+                   hp.quality_score AS quality_score,
+                   cp.id AS counter_id, 
+                   cp.content AS counter_content,
+                   1.0 AS similarity_score,
+                   CASE WHEN hp.is_synthetic = true THEN 2 ELSE 1 END AS layer
+            LIMIT $limit
+            """
+            
+            fallback_params = {"query_text": query_text, "limit": limit_per_layer * 2}
+            fallback_results = list(self.memgraph.execute_and_fetch(fallback_query, fallback_params))
+            
+            # Additional Python filtering for fallback results
+            seen_ids = set()
+            unique_fallback_results = []
+            
+            for result in fallback_results:
+                paragraph_id = result['id']
+                if paragraph_id not in seen_ids:
+                    seen_ids.add(paragraph_id)
+                    unique_fallback_results.append(result)
+            
+            return unique_fallback_results
+        
     def _ensure_vector_indices(self):
         """
         Ensure that vector indices exist for hate content embeddings.
