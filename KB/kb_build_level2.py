@@ -1,6 +1,8 @@
 from gqlalchemy import Memgraph, Node, Relationship, Field
 import json
+import re
 from typing import Optional
+from sentence_transformers import SentenceTransformer
 
 # Make sure these class definitions match what you already have in your codebase
 class Topic(Node):
@@ -17,7 +19,15 @@ class HateParagraph(Node):
     is_synthetic: bool = Field()
     content_type: str = Field()
 
+class HateContent(Node):
+    id: int = Field(index=True, unique=True, exists=True, db=Memgraph("127.0.0.1", 7687))
+    content: str = Field()
+    embedding: Optional[str] = Field()
+
 class TalksAbout(Relationship, type="TALKS_ABOUT"):
+    pass
+
+class Contains(Relationship, type="CONTAINS"):
     pass
 
 def remove_synthetic_hate_paragraphs(memgraph):
@@ -46,15 +56,38 @@ def remove_synthetic_hate_paragraphs(memgraph):
     memgraph.execute(delete_query)
     print("Synthetic hate paragraphs removed successfully")
 
+    # Also remove any HateContent nodes that are no longer connected to a paragraph
+    orphaned_query = """
+    MATCH (hc:HateContent)
+    WHERE NOT (hc)<-[:CONTAINS]-()
+    RETURN count(hc) as count
+    """
+    
+    orphaned_result = next(memgraph.execute_and_fetch(orphaned_query))
+    print(f"Found {orphaned_result['count']} orphaned HateContent nodes to remove")
+    
+    if orphaned_result['count'] > 0:
+        delete_orphaned_query = """
+        MATCH (hc:HateContent)
+        WHERE NOT (hc)<-[:CONTAINS]-()
+        DETACH DELETE hc
+        """
+        memgraph.execute(delete_orphaned_query)
+        print("Orphaned HateContent nodes removed successfully")
+
 def extend_knowledge_base_with_generated_content(jsonl_file_path, memgraph_connection):
     """
     Import generated hate speech examples from a JSONL file into the knowledge base.
+    Includes generating and storing embeddings for semantic search.
     
     Parameters:
     - jsonl_file_path: Path to the JSONL file with generated hate speech
     - memgraph_connection: Memgraph connection instance
     """
     print(f"Extending knowledge base with generated content from: {jsonl_file_path}")
+    
+    # Initialize the sentence transformer model for embeddings
+    model = SentenceTransformer('all-MiniLM-L6-v2')
     
     # Load generated examples
     examples_by_topic = {}
@@ -80,10 +113,15 @@ def extend_knowledge_base_with_generated_content(jsonl_file_path, memgraph_conne
     
     print(f"Loaded examples for {len(examples_by_topic)} topics")
     
-    # Get the highest existing ID to avoid conflicts
+    # Get the highest existing IDs to avoid conflicts
     max_id_query = "MATCH (hp:HateParagraph) RETURN coalesce(max(hp.id), 0) as max_id"
     max_hate_id = next(memgraph_connection.execute_and_fetch(max_id_query))["max_id"]
     print(f"Current maximum HateParagraph ID: {max_hate_id}")
+    
+    # Also get max HateContent ID 
+    max_content_id_query = "MATCH (hc:HateContent) RETURN coalesce(max(hc.id), 0) as max_id"
+    max_content_id = next(memgraph_connection.execute_and_fetch(max_content_id_query))["max_id"]
+    print(f"Current maximum HateContent ID: {max_content_id}")
     
     # Track statistics for reporting
     stats = {
@@ -125,9 +163,11 @@ def extend_knowledge_base_with_generated_content(jsonl_file_path, memgraph_conne
             
         # Import each example
         current_hate_id = max_hate_id
+        current_content_id = max_content_id
         
         for example in examples:
             current_hate_id += 1
+            current_content_id += 1
             
             hate_content = example["content"]
             
@@ -146,9 +186,25 @@ def extend_knowledge_base_with_generated_content(jsonl_file_path, memgraph_conne
                 )
                 hate_node.save(memgraph_connection)
                 
-                # Create relationship
+                # Create relationship to topic
                 talks_about_rel = TalksAbout(_start_node_id=hate_node._id, _end_node_id=topic_node._id)
                 talks_about_rel.save(memgraph_connection)
+                
+                # Generate embedding for the content
+                embedding = model.encode(hate_content).tolist()
+                embedding_json = json.dumps(embedding)
+                
+                # Create a single HateContent node with the same content as the paragraph
+                hate_content_node = HateContent(
+                    id=current_content_id,
+                    content=hate_content,
+                    embedding=embedding_json
+                )
+                hate_content_node.save(memgraph_connection)
+                
+                # Connect HateParagraph to HateContent
+                contains_rel = Contains(_start_node_id=hate_node._id, _end_node_id=hate_content_node._id)
+                contains_rel.save(memgraph_connection)
                 
                 stats["examples_imported"] += 1
             except Exception as e:
@@ -156,8 +212,34 @@ def extend_knowledge_base_with_generated_content(jsonl_file_path, memgraph_conne
                 stats["errors"] += 1
                 continue
         
-        # Update max ID for next topic
+        # Update max IDs for next topic
         max_hate_id = current_hate_id
+        max_content_id = current_content_id
+    
+    # Create vector index for embeddings if it doesn't exist
+    try:
+        # Check if index exists
+        check_query = "SHOW INDEX INFO"
+        indices = list(memgraph_connection.execute_and_fetch(check_query))
+        
+        # Check if our index exists
+        index_exists = False
+        for idx in indices:
+            if isinstance(idx, dict) and idx.get('name') == 'hate_content_embedding_index':
+                index_exists = True
+                break
+        
+        if not index_exists:
+            # Create vector index for HateContent embeddings
+            create_index_query = """
+            CREATE VECTOR INDEX hate_content_embedding_index ON :HateContent(embedding) 
+            WITH CONFIG {"dimension": 384, "capacity": 1000, "metric": "cos"};
+            """
+            memgraph_connection.execute(create_index_query)
+            print("Created vector index for HateContent embeddings")
+    except Exception as e:
+        print(f"Warning: Could not create vector index: {e}")
+        print("This may be expected if vector indices aren't supported in your Memgraph version")
     
     # Print summary statistics
     print("\nImport Summary:")
@@ -171,8 +253,11 @@ if __name__ == "__main__":
     # Connect to Memgraph
     memgraph = Memgraph("127.0.0.1", 7687)
     
-    # Import the generated content
+    # First remove any existing synthetic content
+    remove_synthetic_hate_paragraphs(memgraph)
+    
+    # Import the generated content with embeddings
     stats = extend_knowledge_base_with_generated_content(
-        jsonl_file_path="generated_hate_speech (1).jsonl",
+        jsonl_file_path="generated_hate_speech.jsonl",
         memgraph_connection=memgraph
     )

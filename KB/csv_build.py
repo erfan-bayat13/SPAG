@@ -98,11 +98,13 @@ def process_debates(json_file):
             'quality_score': harmful_subtotal
         })
         
-        # Process sentences for embeddings
         sentences = split_into_sentences(proponent_content)
         for sentence in sentences:
             # Create embedding for sentence
             embedding = model.encode(sentence).tolist()
+            
+            # Store as comma-separated string (better for database import)
+            embedding_str = ','.join(str(x) for x in embedding)
             
             # Add hate sentence
             hate_sentence_id += 1
@@ -110,7 +112,7 @@ def process_debates(json_file):
                 'id': hate_sentence_id,
                 'content': sentence,
                 'paragraph_id': hate_paragraph_id,
-                'embedding': json.dumps(embedding)
+                'embedding': embedding_str  # Stored as comma-separated values
             })
         
         # Process opponent (counterspeech) content

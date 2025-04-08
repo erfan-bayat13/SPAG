@@ -112,14 +112,47 @@ def import_hate_content(file_path):
     # Load CSV and create nodes
     query = """
     LOAD CSV FROM $file_path WITH HEADER AS row
+    WITH row, split(row.embedding, ',') AS embed_parts
     CREATE (s:HateContent {
         id: toInteger(row.id),
         content: row.content,
-        embedding: row.embedding
+        embedding: [x IN embed_parts | toFloat(x)]  # Convert to array of floats
     })
     """
-    
+
     memgraph.execute(query, {"file_path": file_path})
+
+    # Also add this at the end of the import_all_data function
+    # Add this right before the stats_query
+
+    def create_vector_index():
+        """Create vector index for embeddings if it doesn't exist"""
+        print("Setting up vector index for embeddings...")
+        
+        # Check if index exists
+        check_index_query = "SHOW INDEX INFO;"
+        indices = list(memgraph.execute_and_fetch(check_index_query))
+        
+        vector_index_exists = False
+        for idx in indices:
+            if idx.get('name') == 'hate_content_embedding_index':
+                vector_index_exists = True
+                print("Vector index already exists")
+                break
+        
+        if not vector_index_exists:
+            try:
+                create_index_query = """
+                CREATE VECTOR INDEX hate_content_embedding_index ON :HateContent(embedding) 
+                WITH CONFIG {"dimension": 384, "capacity": 1000, "metric": "cos"};
+                """
+                memgraph.execute(create_index_query)
+                print("Vector index created successfully")
+            except Exception as e:
+                print(f"Error creating vector index: {e}")
+
+    # Call create_vector_index at the end of import_all_data function
+    create_vector_index()
     
     # Create relationships between content and paragraphs
     # First, let's debug the process to see if we have paragraph_id in the file
