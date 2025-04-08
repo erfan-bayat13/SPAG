@@ -2,9 +2,11 @@ import time
 import google.generativeai as genai
 from typing import List, Dict, Any, Optional, Tuple
 import numpy as np
+from together import Together
+import os
 
 class GoogleAPIPlayer:
-    def __init__(self, api_key: str, model_name: str = "gemini-pro"):
+    def __init__(self, api_key: str, model_name: str = "gemini-2.0-flash"):
         genai.configure(api_key=api_key)
         self.model = genai.GenerativeModel(model_name)
         
@@ -24,6 +26,66 @@ class GoogleAPIPlayer:
             print(f"API call failed: {str(e)}")
             return ""
 
+class TogetherAIPlayer:
+    """A wrapper class for using the Together AI API"""
+    
+    def __init__(self, model_name, api_key=None):
+        """
+        Initialize the Together AI player with a model name
+        
+        Args:
+            model_name: Name of the model on Together AI platform
+            api_key: API key (optional, will use env var if not provided)
+        """
+        self.model_name = model_name
+        
+        # Set API key from args or environment
+        if api_key:
+            os.environ["TOGETHER_API_KEY"] = api_key
+        elif "TOGETHER_API_KEY" not in os.environ:
+            raise ValueError("TOGETHER_API_KEY environment variable must be set")
+            
+        self.client = Together()
+    
+    def generate(self, prompt, max_tokens=512, temperature=1.0, do_sample=True):
+        """
+        Generate text using the Together AI API
+        
+        Args:
+            prompt: The input prompt
+            max_tokens: Maximum number of tokens to generate
+            temperature: Sampling temperature
+            do_sample: Whether to use sampling
+        
+        Returns:
+            The generated text response
+        """
+        # Make API call with retry logic for rate limits
+        max_retries = 5
+        retry_count = 0
+        
+        while retry_count < max_retries:
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=temperature if do_sample else 0.7,
+                    max_tokens=max_tokens
+                )
+                return response.choices[0].message.content
+                
+            except Exception as e:
+                retry_count += 1
+                print(f"API error: {e}, retrying ({retry_count}/{max_retries})...")
+                if "rate_limit" in str(e).lower():
+                    time.sleep(5)  # Wait 5 seconds before retrying on rate limit
+                else:
+                    time.sleep(1)
+                
+                if retry_count == max_retries:
+                    print(f"Failed after {max_retries} retries")
+                    return f"Error: API failed to respond after {max_retries} attempts. Error: {str(e)}"
+
 class HateAssessmentSystem:
     """
     System for assessing and mitigating potential hate speech in user queries.
@@ -34,8 +96,8 @@ class HateAssessmentSystem:
     HATE_THRESHOLD_HIGH = 7.0   # Above this requires stronger mitigation
     
     # Define score weights
-    SIMILARITY_WEIGHT = 0.45    # Weight for similarity score
-    HARMFULNESS_WEIGHT = 0.55   # Weight for harmfulness score
+    SIMILARITY_WEIGHT = 0.55    # Weight for similarity score
+    HARMFULNESS_WEIGHT = 0.45   # Weight for harmfulness score
     
     def __init__(self, retriever, api_key: str):
         """
@@ -47,6 +109,7 @@ class HateAssessmentSystem:
         """
         self.retriever = retriever
         self.llm = GoogleAPIPlayer(api_key=api_key)
+        #self.llm = TogetherAIPlayer(model_name="google/gemma-2-9b-it", api_key=api_key)
         
     def process_query(self, user_query: str, search_method: str = "hybrid", 
                       num_results: int = 5) -> Dict[str, Any]:
@@ -224,6 +287,7 @@ class HateAssessmentSystem:
             if "similarity_score" in item and item["similarity_score"] is not None and item["similarity_score"] != 0:
                 similarity = float(item["similarity_score"])
                 print(f"  Using similarity_score: {similarity}")
+            # possible extenstion for future if needed
             # Then check for relevance_score from syntax search
             # elif "relevance_score" in item and item["relevance_score"] is not None and item["relevance_score"] != 0:
             #     # Normalize relevance score to 0-1 range
@@ -425,12 +489,12 @@ if __name__ == "__main__":
     
     # Initialize components
     retriever = RAGRetriever()
-    assessment_system = HateAssessmentSystem(retriever, api_key="YOUR_API_KEY")
+    assessment_system = HateAssessmentSystem(retriever, api_key="API")
     
     # Process a sample query
     result = assessment_system.process_query(
-        user_query="i hate immigrants",
-        search_method="hybrid",
+        user_query="whats the recipie for pasta for",
+        search_method="semantic",
         num_results=5
     )
     
