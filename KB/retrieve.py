@@ -298,7 +298,7 @@ class RAGRetriever:
         
         return unique_results
         
-    def semantic_search(self, query_text: str, limit_per_layer: int = 5, similarity_threshold: float = 0.5) -> List[Dict]:
+    def semantic_search(self, query_text: str, limit_per_layer: int = 5, similarity_threshold: float = 0.5, order_by: str = "similarity") -> List[Dict]:
         """
         Perform semantic search on hate content using vector search capabilities.
         Searches both debate-based content (layer 1) and synthetic content (layer 2).
@@ -323,6 +323,7 @@ class RAGRetriever:
         query_embedding = self.model.encode(query_text).tolist()
         embeddings_str = ",".join([str(x) for x in query_embedding])
         
+        order_by_clause = "similarity_score" if order_by == "similarity" else "hp.quality_score"
         # Layer 1: Search in debate-based hate content using vector search
         # We request more results from vector search to ensure we have enough after filtering
         layer1_query = f"""
@@ -351,7 +352,7 @@ class RAGRetriever:
                cp.content AS counter_content,
                max_similarity AS similarity_score,
                1 AS layer
-        ORDER BY similarity_score DESC
+        ORDER BY {order_by_clause} DESC
         LIMIT $result_limit
         """
         
@@ -382,7 +383,7 @@ class RAGRetriever:
                cp.content AS counter_content,
                max_similarity AS similarity_score,
                2 AS layer
-        ORDER BY similarity_score DESC
+        ORDER BY {order_by_clause} DESC
         LIMIT $result_limit
         """
         
@@ -414,6 +415,12 @@ class RAGRetriever:
                 if paragraph_id not in seen_ids:
                     seen_ids.add(paragraph_id)
                     unique_results.append(result)
+            
+            # Sort results by similarity score
+            if order_by == "similarity":
+                unique_results.sort(key=lambda x: x['similarity_score'], reverse=True)
+            elif order_by == "quality_score":
+                unique_results.sort(key=lambda x: x['quality_score'], reverse=True)
             
             return unique_results
         

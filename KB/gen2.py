@@ -112,7 +112,7 @@ class HateAssessmentSystem:
         #self.llm = TogetherAIPlayer(model_name="google/gemma-2-9b-it", api_key=api_key)
         
     def process_query(self, user_query: str, search_method: str = "hybrid", 
-                      num_results: int = 5) -> Dict[str, Any]:
+                      num_results: int = 5, order_by: str = "relevance") -> Dict[str, Any]:
         """
         Process a user query through the entire assessment and response pipeline.
         
@@ -125,7 +125,7 @@ class HateAssessmentSystem:
             Dict containing response, assessment details, and retrieved content
         """
         # Step 1: Retrieve relevant content from knowledge base
-        retrieved_content = self._retrieve_content(user_query, search_method, num_results)
+        retrieved_content = self._retrieve_content(user_query, search_method, num_results,order_by=order_by)
         
         # Step 2: Calculate hate score based on retrieved content
         hate_score, assessment_details = self._calculate_hate_score(user_query, retrieved_content)
@@ -149,11 +149,11 @@ class HateAssessmentSystem:
         
         return result
     
-    def _retrieve_content(self, query: str, search_method: str, limit: int) -> List[Dict]:
+    def _retrieve_content(self, query: str, search_method: str, limit: int, order_by: str = "similarity") -> List[Dict]:
         """
         Retrieve content from the knowledge base using the specified search method.
-        Only passes counter-speech content to the next phase while retaining metrics
-        from the hate paragraphs for scoring.
+        For synthetic hate content with no counter-speech, finds and assigns a random
+        counter-speech example from the same topic.
         
         Args:
             query: User query text
@@ -167,11 +167,11 @@ class HateAssessmentSystem:
         if search_method == "syntax":
             raw_results = self.retriever.syntax_search_v2(query, limit_per_layer=limit)
         elif search_method == "semantic":
-            raw_results = self.retriever.semantic_search(query, limit_per_layer=limit)
+            raw_results = self.retriever.semantic_search(query, limit_per_layer=limit,order_by=order_by)
         else:  # hybrid
             # Get results from both methods
             syntax_results = self.retriever.syntax_search_v2(query, limit_per_layer=limit)
-            semantic_results = self.retriever.semantic_search(query, limit_per_layer=limit)
+            semantic_results = self.retriever.semantic_search(query, limit_per_layer=limit,order_by=order_by)
             
             # Debug print to check what's in the semantic results
             print(f"Debug - Semantic search returned {len(semantic_results)} results")
@@ -202,16 +202,68 @@ class HateAssessmentSystem:
         
         # Debug print to check combined results
         print(f"Debug - Combined raw results: {len(raw_results)} items")
-        if raw_results:
-            first_raw = raw_results[0]
-            print(f"Debug - First raw result keys: {first_raw.keys()}")
-            if 'similarity_score' in first_raw:
-                print(f"Debug - Raw similarity score: {first_raw['similarity_score']}")
+        
+        # Identify synthetic hate content that lacks counter-speech
+        synthetic_items_without_counter = []
+        for item in raw_results:
+            # Check if it's synthetic and missing counter content
+            is_synthetic = item.get("layer") == 2 or item.get("is_synthetic") == True
+            has_counter = item.get("counter_content") or item.get("counter_id")
+            
+            if is_synthetic and not has_counter:
+                synthetic_items_without_counter.append(item)
+        
+        # If we have synthetic items without counter content, find matching counters
+        if synthetic_items_without_counter:
+            print(f"Debug - Found {len(synthetic_items_without_counter)} synthetic items without counter content")
+            
+            # Get topics from synthetic items
+            topics = [item.get("topic") for item in synthetic_items_without_counter if item.get("topic")]
+            unique_topics = list(set([t for t in topics if t]))
+            
+            if unique_topics:
+                print(f"Debug - Found these topics needing counters: {unique_topics}")
+                
+                # Fetch random counter content for each topic
+                topic_to_counter_map = {}
+                
+                for topic in unique_topics:
+                    counter_query = """
+                    MATCH (cp:CounterParagraph)-[:TALKS_ABOUT]->(t:Topic {name: $topic})
+                    RETURN cp.id AS id, cp.content AS content, 
+                        cp.directness AS directness, 
+                        cp.evidence_quality AS evidence_quality,
+                        cp.persuasiveness AS persuasiveness,
+                        cp.quality_score AS quality_score
+                    LIMIT 5
+                    """
+                    try:
+                        counters = list(self.retriever.memgraph.execute_and_fetch(counter_query, {"topic": topic}))
+                        if counters:
+                            # Select a random counter from the results
+                            import random
+                            random_counter = random.choice(counters)
+                            topic_to_counter_map[topic] = random_counter
+                            print(f"Debug - Found counter for topic '{topic}'")
+                    except Exception as e:
+                        print(f"Error fetching counters for topic {topic}: {e}")
+                
+                # Assign counters to synthetic items
+                for item in synthetic_items_without_counter:
+                    topic = item.get("topic")
+                    if topic and topic in topic_to_counter_map:
+                        counter = topic_to_counter_map[topic]
+                        item["counter_id"] = counter.get("id")
+                        item["counter_content"] = counter.get("content")
+                        item["directness"] = counter.get("directness", 0)
+                        item["evidence_quality"] = counter.get("evidence_quality", 0)
+                        item["persuasiveness"] = counter.get("persuasiveness", 0)
+                        print(f"Debug - Assigned counter to synthetic item with id {item.get('id')}")
         
         # Transform results to only include counter content while preserving metrics
         processed_results = []
         for item in raw_results:
-            # Skip items without counter content
+            # Skip items that still don't have counter content after our fix
             if not item.get("counter_content") and not item.get("counter_id"):
                 continue
                 
@@ -230,9 +282,6 @@ class HateAssessmentSystem:
                 # Explicitly preserve similarity score from semantic search
                 "similarity_score": item.get("similarity_score", 0),
                 
-                # Keep relevance score from syntax search as backup
-                #"relevance_score": item.get("relevance_score", 0),
-                
                 # For counter paragraphs, look at the correct fields based on your KB structure
                 "directness": item.get("directness", 0),
                 "evidence_quality": item.get("evidence_quality", 0),
@@ -247,7 +296,6 @@ class HateAssessmentSystem:
             first_proc = processed_results[0]
             print(f"Debug - First processed keys: {first_proc.keys()}")
             print(f"Debug - Processed similarity_score: {first_proc['similarity_score']}")
-            #print(f"Debug - Processed relevance_score: {first_proc['relevance_score']}")
             
         return processed_results
     
@@ -423,6 +471,7 @@ The query appears to touch on potentially sensitive topics. In your response:
             prompt += "You may consider these reference perspectives in your response:\n\n"
             for i, example in enumerate(counter_examples[:2]):
                 prompt += f"Perspective {i+1}: {example}\n\n"
+        print(f"Debug - Mild mitigation prompt: {prompt}")
         
         return prompt
     
@@ -493,7 +542,7 @@ if __name__ == "__main__":
     
     # Process a sample query
     result = assessment_system.process_query(
-        user_query="whats the recipie for pasta for",
+        user_query="i really hate these immigrants, they are ruining our country",
         search_method="semantic",
         num_results=5
     )
