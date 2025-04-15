@@ -153,7 +153,7 @@ def load_debate_dataset(data_path):
     df = pd.read_csv(data_path)
     return DebateDataset(df['topic'].tolist(), df['position'].tolist())
 
-def convert_debate_history_to_query(history, topic, position, max_turns=4):
+def convert_debate_history_to_query(history, topic, position, max_turns=8):
     """Convert debate history into a query for the model"""
     DEBATE_RULE_PROMPT = DEBATE_RULE_PROMPTS[0]
     history_str = ""
@@ -252,7 +252,7 @@ def main():
                 "history": [], 
                 "topic": item['topic'],
                 "position": item['position'],
-                "max_turns": min(args.max_turns, 4)  # Ensure max_turns doesn't exceed 4
+                "max_turns": args.max_turns # Ensure max_turns doesn't exceed 4
             })
         
         # Process each debate in the batch
