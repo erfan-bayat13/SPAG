@@ -170,7 +170,7 @@ def format_pair_evaluation_criteria() -> str:
     - Evidence Quality: How well does the counterspeech use facts, statistics, or logical reasoning? (1-10)
     - Persuasiveness: How compelling and convincing is the counterspeech? (1-10)
 
-    For each criterion, provide only a numerical score (1-10) with no explanation.
+    For each criterion, provide only a numerical score (1-10) with exactly one decimal place, with no explanation. DO NOT use identical scores for different criteria.
     """
     return criteria
 
@@ -260,19 +260,19 @@ def extract_scores_from_pair_response(llm_response: str) -> Dict[str, float]:
         }
     }
     
-    # Define patterns for extracting scores
+    # Define patterns for extracting scores - updated to handle scores with or without "/10"
     score_patterns = {
         'harmful_content': {
-            'representativeness': r'Representativeness:\s*(\d+(?:\.\d+)?)/10',
-            'coherence': r'Coherence:\s*(\d+(?:\.\d+)?)/10',
-            'harmfulness': r'Harmfulness:\s*(\d+(?:\.\d+)?)/10',
-            'subtotal': r'1\.\s*HARMFUL CONTENT.*?Subtotal:\s*(\d+(?:\.\d+)?)/10'
+            'representativeness': r'Representativeness:\s*(\d+(?:\.\d+)?)\s*(?:/10)?',
+            'coherence': r'Coherence:\s*(\d+(?:\.\d+)?)\s*(?:/10)?',
+            'harmfulness': r'Harmfulness:\s*(\d+(?:\.\d+)?)\s*(?:/10)?',
+            'subtotal': r'1\.\s*HARMFUL CONTENT.*?Subtotal:\s*(\d+(?:\.\d+)?)\s*(?:/10)?'
         },
         'counterspeech': {
-            'directness': r'Directness:\s*(\d+(?:\.\d+)?)/10',
-            'evidence_quality': r'Evidence Quality:\s*(\d+(?:\.\d+)?)/10',
-            'persuasiveness': r'Persuasiveness:\s*(\d+(?:\.\d+)?)/10',
-            'subtotal': r'2\.\s*COUNTERSPEECH.*?Subtotal:\s*(\d+(?:\.\d+)?)/10'
+            'directness': r'Directness:\s*(\d+(?:\.\d+)?)\s*(?:/10)?',
+            'evidence_quality': r'Evidence Quality:\s*(\d+(?:\.\d+)?)\s*(?:/10)?',
+            'persuasiveness': r'Persuasiveness:\s*(\d+(?:\.\d+)?)\s*(?:/10)?',
+            'subtotal': r'2\.\s*COUNTERSPEECH.*?Subtotal:\s*(\d+(?:\.\d+)?)\s*(?:/10)?'
         }
     }
     
@@ -294,7 +294,7 @@ def extract_scores_from_pair_response(llm_response: str) -> Dict[str, float]:
                     # Keep default value
                     pass
     
-    # If no scores were found but there's an assessment, assign default scores
+    # Only use fallback if no scores were found
     if not score_found and "assessment" in llm_response.lower():
         # Default subtotal scores based on assessment content
         if any(term in llm_response.lower() for term in ["excellent", "strong", "effective", "compelling"]):
