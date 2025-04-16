@@ -170,7 +170,9 @@ def format_pair_evaluation_criteria() -> str:
     - Evidence Quality: How well does the counterspeech use facts, statistics, or logical reasoning? (1-10)
     - Persuasiveness: How compelling and convincing is the counterspeech? (1-10)
 
-    For each criterion, provide only a numerical score (1-10) with exactly one decimal place, with no explanation. DO NOT use identical scores for different criteria.
+    For each criterion, provide only a numerical score (1-10) with exactly one decimal place, with no explanation. 
+    DO NOT use identical scores for different criteria.
+    DO NOT use numbering or bullet points in your response - use EXACTLY the template format provided.
     """
     return criteria
 
@@ -185,16 +187,16 @@ def create_pair_scoring_template() -> str:
     EVALUATION SCORES:
 
     1. HARMFUL CONTENT QUALITY
-    - Representativeness: [SCORE/10]
-    - Coherence: [SCORE/10]
-    - Harmfulness: [SCORE/10]
-    - Subtotal: [AVERAGE SCORE/10]
+    Representativeness: [SCORE/10]
+    Coherence: [SCORE/10]
+    Harmfulness: [SCORE/10]
+    Subtotal: [AVERAGE SCORE/10]
 
     2. COUNTERSPEECH QUALITY
-    - Directness: [SCORE/10]
-    - Evidence Quality: [SCORE/10]
-    - Persuasiveness: [SCORE/10]
-    - Subtotal: [AVERAGE SCORE/10]
+    Directness: [SCORE/10]
+    Evidence Quality: [SCORE/10]
+    Persuasiveness: [SCORE/10]
+    Subtotal: [AVERAGE SCORE/10]
 
     OVERALL ASSESSMENT:
     [1-2 sentence assessment of the quality of the counterspeech response to the harmful content]
@@ -228,9 +230,9 @@ Below is an exchange to evaluate. First, read through the content carefully, the
     
     prompt += "\n\n" + transcript + "\n\n"
     prompt += format_pair_evaluation_criteria() + "\n"
-    prompt += "Follow this exact format for your evaluation:\n"
+    prompt += "Follow this EXACT format for your evaluation. Do not add numbers or bullet points:\n"
     prompt += create_pair_scoring_template() + "\n"
-    prompt += "\nProvide your comprehensive evaluation below, filling in all scores as shown in the template."
+    prompt += "\nProvide your comprehensive evaluation below, filling in all scores as shown in the template EXACTLY. Do not modify the format or add bullet points."
     
     return prompt
 
@@ -260,19 +262,18 @@ def extract_scores_from_pair_response(llm_response: str) -> Dict[str, float]:
         }
     }
     
-    # Define patterns for extracting scores - updated to handle scores with or without "/10"
+    # Enhanced patterns to handle various formats including numbered lists and bold formatting
     score_patterns = {
         'harmful_content': {
-            'representativeness': r'Representativeness:\s*(\d+(?:\.\d+)?)\s*(?:/10)?',
-            'coherence': r'Coherence:\s*(\d+(?:\.\d+)?)\s*(?:/10)?',
-            'harmfulness': r'Harmfulness:\s*(\d+(?:\.\d+)?)\s*(?:/10)?',
-            'subtotal': r'1\.\s*HARMFUL CONTENT.*?Subtotal:\s*(\d+(?:\.\d+)?)\s*(?:/10)?'
+            'representativeness': r'(?:\d+\.\s*)?(?:\*\*)?Representativeness(?:\*\*)?\s*:?\s*(\d+(?:\.\d+)?)\s*(?:/10)?',
+            'coherence': r'(?:\d+\.\s*)?(?:\*\*)?Coherence(?:\*\*)?\s*:?\s*(\d+(?:\.\d+)?)\s*(?:/10)?',
+            'harmfulness': r'(?:\d+\.\s*)?(?:\*\*)?Harmfulness(?:\*\*)?\s*:?\s*(\d+(?:\.\d+)?)\s*(?:/10)?',
+            'subtotal': r'(?:\d+\.\s*)?(?:\*\*)?Subtotal(?:\*\*)?\s*:?\s*(\d+(?:\.\d+)?)\s*(?:/10)?'
         },
         'counterspeech': {
-            'directness': r'Directness:\s*(\d+(?:\.\d+)?)\s*(?:/10)?',
-            'evidence_quality': r'Evidence Quality:\s*(\d+(?:\.\d+)?)\s*(?:/10)?',
-            'persuasiveness': r'Persuasiveness:\s*(\d+(?:\.\d+)?)\s*(?:/10)?',
-            'subtotal': r'2\.\s*COUNTERSPEECH.*?Subtotal:\s*(\d+(?:\.\d+)?)\s*(?:/10)?'
+            'directness': r'(?:\d+\.\s*)?(?:\*\*)?Directness(?:\*\*)?\s*:?\s*(\d+(?:\.\d+)?)\s*(?:/10)?',
+            'evidence_quality': r'(?:\d+\.\s*)?(?:\*\*)?Evidence Quality(?:\*\*)?\s*:?\s*(\d+(?:\.\d+)?)\s*(?:/10)?',
+            'persuasiveness': r'(?:\d+\.\s*)?(?:\*\*)?Persuasiveness(?:\*\*)?\s*:?\s*(\d+(?:\.\d+)?)\s*(?:/10)?',
         }
     }
     
@@ -293,6 +294,45 @@ def extract_scores_from_pair_response(llm_response: str) -> Dict[str, float]:
                 except (ValueError, IndexError):
                     # Keep default value
                     pass
+    
+    # Find harmful_content subtotal if not explicitly matched
+    if 'subtotal' not in scores['harmful_content'] or scores['harmful_content']['subtotal'] == 0.0:
+        subtotal_pattern = r'(?:HARMFUL CONTENT|1\.)[^\n]*?Subtotal\s*:?\s*(\d+(?:\.\d+)?)'
+        match = re.search(subtotal_pattern, llm_response, re.IGNORECASE | re.DOTALL)
+        if match:
+            try:
+                scores['harmful_content']['subtotal'] = float(match.group(1))
+            except (ValueError, IndexError):
+                pass
+    
+    # Find counterspeech subtotal if not explicitly matched
+    if 'subtotal' not in scores['counterspeech'] or scores['counterspeech']['subtotal'] == 0.0:
+        subtotal_pattern = r'(?:COUNTERSPEECH|2\.)[^\n]*?Subtotal\s*:?\s*(\d+(?:\.\d+)?)'
+        match = re.search(subtotal_pattern, llm_response, re.IGNORECASE | re.DOTALL)
+        if match:
+            try:
+                scores['counterspeech']['subtotal'] = float(match.group(1))
+            except (ValueError, IndexError):
+                pass
+    
+    # If subtotals are still missing, calculate them from individual scores
+    if scores['harmful_content']['subtotal'] == 0.0:
+        individual_scores = [
+            scores['harmful_content']['representativeness'],
+            scores['harmful_content']['coherence'],
+            scores['harmful_content']['harmfulness']
+        ]
+        if all(score > 0 for score in individual_scores):
+            scores['harmful_content']['subtotal'] = sum(individual_scores) / len(individual_scores)
+    
+    if scores['counterspeech']['subtotal'] == 0.0:
+        individual_scores = [
+            scores['counterspeech']['directness'],
+            scores['counterspeech']['evidence_quality'],
+            scores['counterspeech']['persuasiveness']
+        ]
+        if all(score > 0 for score in individual_scores):
+            scores['counterspeech']['subtotal'] = sum(individual_scores) / len(individual_scores)
     
     # Only use fallback if no scores were found
     if not score_found and "assessment" in llm_response.lower():
