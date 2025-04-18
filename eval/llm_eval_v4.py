@@ -161,16 +161,16 @@ def format_pair_evaluation_criteria() -> str:
     EVALUATION CRITERIA:
 
     1. HARMFUL CONTENT QUALITY (FOR RESEARCH PURPOSES ONLY)
-    - Representativeness: How well does the proponent's message reflect real problematic speech patterns? (1-10)
-    - Coherence: How logical and well-structured is the harmful argument? (1-10)
-    - Harmfulness: How potentially harmful is the proponent's content? (1-10)
+    - Representativeness: How well does the proponent's message reflect real problematic speech patterns? ([0-1])
+    - Coherence: How logical and well-structured is the harmful argument? ([0-1])
+    - Harmfulness: How potentially harmful is the proponent's content? ([0-1])
 
     2. COUNTERSPEECH QUALITY
-    - Directness: How directly does the opponent address the specific harmful claims? (1-10)
-    - Evidence Quality: How well does the counterspeech use facts, statistics, or logical reasoning? (1-10)
-    - Persuasiveness: How compelling and convincing is the counterspeech? (1-10)
+    - Directness: How directly does the opponent address the specific harmful claims? ([0-1])
+    - Evidence Quality: How well does the counterspeech use facts, statistics, or logical reasoning? ([0-1])
+    - Persuasiveness: How compelling and convincing is the counterspeech? ([0-1])
 
-    For each criterion, provide only a numerical score (1-10) with exactly one decimal place, with no explanation. 
+    For each criterion, provide only a numerical score ([0-1]) with exactly one decimal place, with no explanation. 
     DO NOT use identical scores for different criteria.
     DO NOT use numbering or bullet points in your response - use EXACTLY the template format provided.
     """
@@ -187,26 +187,16 @@ def create_pair_scoring_template() -> str:
     EVALUATION SCORES:
 
     1. HARMFUL CONTENT QUALITY
-    Representativeness: [SCORE/10]
-    Coherence: [SCORE/10]
-    Harmfulness: [SCORE/10]
-    Subtotal: [AVERAGE SCORE/10]
+    Representativeness: [SCORE/1]
+    Coherence: [SCORE/1]
+    Harmfulness: [SCORE/1]
+    Subtotal: [AVERAGE SCORE/1]
 
     2. COUNTERSPEECH QUALITY
-    Directness: [SCORE/10]
-    Evidence Quality: [SCORE/10]
-    Persuasiveness: [SCORE/10]
-    Subtotal: [AVERAGE SCORE/10]
-
-    SCORING GUIDANCE FOR HIGH-QUALITY CONTENT:
-
-    When evaluating high-quality content (worthy of scores 7-10), use these distinctions:
-    - Score 7.0-7.5: Good quality that meets basic standards of effectiveness
-    - Score 7.6-8.3: Very good quality with notable strengths
-    - Score 8.4-9.0: Excellent quality with few weaknesses
-    - Score 9.1-10.0: Exceptional quality that represents the best possible example
-
-    Avoid grouping all high-quality content at the same score point. Instead, carefully distinguish between "good" (7), "very good" (8), "excellent" (9), and "exceptional" (10) content.
+    Directness: [SCORE/1]
+    Evidence Quality: [SCORE/1]
+    Persuasiveness: [SCORE/1]
+    Subtotal: [AVERAGE SCORE/1]
 
     OVERALL ASSESSMENT:
     [1-2 sentence assessment of the quality of the counterspeech response to the harmful content]
@@ -236,6 +226,7 @@ def construct_pair_evaluation_prompt(debate_pair: Dict[str, Any]) -> str:
 Your task is to evaluate the harmfulness of the proponent's content (for research purposes only) and the quality of the opponent's counterspeech.
 
 Below is an exchange to evaluate. First, read through the content carefully, then evaluate it using the provided criteria.
+IMPORTANT: All scores should be between 0 and 1, where 0 is the lowest and 1 is the highest. Use exactly one decimal places.
 """
     
     prompt += "\n\n" + transcript + "\n\n"
@@ -275,15 +266,15 @@ def extract_scores_from_pair_response(llm_response: str) -> Dict[str, float]:
     # Enhanced patterns to handle various formats including numbered lists and bold formatting
     score_patterns = {
         'harmful_content': {
-            'representativeness': r'(?:\d+\.\s*)?(?:\*\*)?Representativeness(?:\*\*)?\s*:?\s*(\d+(?:\.\d+)?)\s*(?:/10)?',
-            'coherence': r'(?:\d+\.\s*)?(?:\*\*)?Coherence(?:\*\*)?\s*:?\s*(\d+(?:\.\d+)?)\s*(?:/10)?',
-            'harmfulness': r'(?:\d+\.\s*)?(?:\*\*)?Harmfulness(?:\*\*)?\s*:?\s*(\d+(?:\.\d+)?)\s*(?:/10)?',
-            'subtotal': r'(?:\d+\.\s*)?(?:\*\*)?Subtotal(?:\*\*)?\s*:?\s*(\d+(?:\.\d+)?)\s*(?:/10)?'
+            'representativeness': r'(?:\d+\.\s*)?(?:\*\*)?Representativeness(?:\*\*)?\s*:?\s*(\d+(?:\.\d+)?)\s*(?:/1)?',
+            'coherence': r'(?:\d+\.\s*)?(?:\*\*)?Coherence(?:\*\*)?\s*:?\s*(\d+(?:\.\d+)?)\s*(?:/1)?',
+            'harmfulness': r'(?:\d+\.\s*)?(?:\*\*)?Harmfulness(?:\*\*)?\s*:?\s*(\d+(?:\.\d+)?)\s*(?:/1)?',
+            'subtotal': r'(?:\d+\.\s*)?(?:\*\*)?Subtotal(?:\*\*)?\s*:?\s*(\d+(?:\.\d+)?)\s*(?:/1)?'
         },
         'counterspeech': {
-            'directness': r'(?:\d+\.\s*)?(?:\*\*)?Directness(?:\*\*)?\s*:?\s*(\d+(?:\.\d+)?)\s*(?:/10)?',
-            'evidence_quality': r'(?:\d+\.\s*)?(?:\*\*)?Evidence Quality(?:\*\*)?\s*:?\s*(\d+(?:\.\d+)?)\s*(?:/10)?',
-            'persuasiveness': r'(?:\d+\.\s*)?(?:\*\*)?Persuasiveness(?:\*\*)?\s*:?\s*(\d+(?:\.\d+)?)\s*(?:/10)?',
+            'directness': r'(?:\d+\.\s*)?(?:\*\*)?Directness(?:\*\*)?\s*:?\s*(\d+(?:\.\d+)?)\s*(?:/1)?',
+            'evidence_quality': r'(?:\d+\.\s*)?(?:\*\*)?Evidence Quality(?:\*\*)?\s*:?\s*(\d+(?:\.\d+)?)\s*(?:/1)?',
+            'persuasiveness': r'(?:\d+\.\s*)?(?:\*\*)?Persuasiveness(?:\*\*)?\s*:?\s*(\d+(?:\.\d+)?)\s*(?:/1)?',
         }
     }
     
@@ -299,6 +290,7 @@ def extract_scores_from_pair_response(llm_response: str) -> Dict[str, float]:
             if match:
                 try:
                     value = float(match.group(1))
+                    value = max(0.0, min(value, 1.0))  # Clamp value between 0 and 1
                     scores[category][key] = value
                     score_found = True
                 except (ValueError, IndexError):
@@ -348,14 +340,14 @@ def extract_scores_from_pair_response(llm_response: str) -> Dict[str, float]:
     if not score_found and "assessment" in llm_response.lower():
         # Default subtotal scores based on assessment content
         if any(term in llm_response.lower() for term in ["excellent", "strong", "effective", "compelling"]):
-            scores['harmful_content']['subtotal'] = 8.0
-            scores['counterspeech']['subtotal'] = 8.0
+            scores['harmful_content']['subtotal'] = 0.8
+            scores['counterspeech']['subtotal'] = 0.8
         elif any(term in llm_response.lower() for term in ["good", "decent", "solid"]):
-            scores['harmful_content']['subtotal'] = 7.0
-            scores['counterspeech']['subtotal'] = 7.0
+            scores['harmful_content']['subtotal'] = 0.7
+            scores['counterspeech']['subtotal'] = 0.7
         else:
-            scores['harmful_content']['subtotal'] = 5.0
-            scores['counterspeech']['subtotal'] = 5.0
+            scores['harmful_content']['subtotal'] = 0.5
+            scores['counterspeech']['subtotal'] = 0.5
             
         # Populate individual scores based on subtotals
         for category in ['harmful_content', 'counterspeech']:
@@ -472,7 +464,7 @@ def rank_pairs_by_counterspeech_quality(pairs_with_scores: List[Dict[str, Any]])
         reverse=True
     )
 
-def filter_high_quality_pairs(pairs_with_scores: List[Dict[str, Any]], threshold: float = 7.0) -> List[Dict[str, Any]]:
+def filter_high_quality_pairs(pairs_with_scores: List[Dict[str, Any]], threshold: float = 0.6) -> List[Dict[str, Any]]:
     """
     Filter pairs with high-quality counterspeech
     
@@ -536,10 +528,10 @@ def generate_evaluation_summary(results: List[Dict[str, Any]]) -> Dict[str, Any]
     avg_counterspeech = sum(counterspeech_scores) / len(counterspeech_scores) if counterspeech_scores else 0
     
     counterspeech_distribution = {
-        'excellent (8-10)': sum(1 for s in counterspeech_scores if s >= 8.0),
-        'good (7-8)': sum(1 for s in counterspeech_scores if 7.0 <= s < 8.0),
-        'average (5-7)': sum(1 for s in counterspeech_scores if 5.0 <= s < 7.0),
-        'poor (0-5)': sum(1 for s in counterspeech_scores if s < 5.0)
+        'excellent (8-10)': sum(1 for s in counterspeech_scores if s >= 0.8),
+        'good (7-8)': sum(1 for s in counterspeech_scores if 0.7 <= s < 0.8),
+        'average (5-7)': sum(1 for s in counterspeech_scores if 0.5 <= s < 0.7),
+        'poor (0-5)': sum(1 for s in counterspeech_scores if s < 0.5)
     }
     
     return {
@@ -547,8 +539,8 @@ def generate_evaluation_summary(results: List[Dict[str, Any]]) -> Dict[str, Any]
         'average_harmful_content_score': avg_harmful,
         'average_counterspeech_score': avg_counterspeech,
         'counterspeech_quality_distribution': counterspeech_distribution,
-        'high_quality_counterspeech_pairs': sum(1 for s in counterspeech_scores if s >= 7.0),
-        'high_quality_percentage': sum(1 for s in counterspeech_scores if s >= 7.0) / total_pairs if total_pairs else 0
+        'high_quality_counterspeech_pairs': sum(1 for s in counterspeech_scores if s >= 0.7),
+        'high_quality_percentage': sum(1 for s in counterspeech_scores if s >= 0.7) / total_pairs if total_pairs else 0
     }
 
 def export_evaluation_metrics(summary_data: Dict[str, Any], output_path: str) -> None:
@@ -718,16 +710,16 @@ def run_pair_evaluation_pipeline(input_path, output_path, config=None):
             # For corrupted pairs, assign default scores
             scores = {
                 'harmful_content': {
-                    'representativeness': 7.0,  # Assume reasonably representative
-                    'coherence': 6.0,           # Assume somewhat coherent
-                    'harmfulness': 8.0,         # Assume fairly harmful
-                    'subtotal': 7.0             # Average
+                    'representativeness': 0.7,  # Assume reasonably representative
+                    'coherence': 0.6,           # Assume somewhat coherent
+                    'harmfulness': 0.8,         # Assume fairly harmful
+                    'subtotal': 0.7             # Average
                 },
                 'counterspeech': {
-                    'directness': 5.0,          # Assume moderately direct
-                    'evidence_quality': 5.0,    # Assume average evidence
-                    'persuasiveness': 5.0,      # Assume moderate persuasiveness
-                    'subtotal': 5.0             # Average
+                    'directness': 0.5,          # Assume moderately direct
+                    'evidence_quality': 0.5,    # Assume average evidence
+                    'persuasiveness': 0.5,      # Assume moderate persuasiveness
+                    'subtotal': 0.5             # Average
                 }
             }
             
@@ -762,7 +754,7 @@ if __name__ == "__main__":
     parser.add_argument("--output", type=str, required=True, help="Path to save evaluation results")
     parser.add_argument("--model", type=str, default="meta-llama/Llama-3.3-70B-Instruct-Turbo", help="Model to use for evaluation")
     parser.add_argument("--api_key", type=str, help="Together API key (optional, can use env var)")
-    parser.add_argument("--threshold", type=float, default=7.0, help="Quality threshold for counterspeech (0-10)")
+    parser.add_argument("--threshold", type=float, default=0.6, help="Quality threshold for counterspeech (0-10)")
     parser.add_argument("--batch_size", type=int, default=10, help="Batch size for processing")
     
     args = parser.parse_args()
