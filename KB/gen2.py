@@ -335,21 +335,8 @@ class HateAssessmentSystem:
             if "similarity_score" in item and item["similarity_score"] is not None and item["similarity_score"] != 0:
                 similarity = float(item["similarity_score"])
                 print(f"  Using similarity_score: {similarity}")
-            # possible extenstion for future if needed
-            # Then check for relevance_score from syntax search
-            # elif "relevance_score" in item and item["relevance_score"] is not None and item["relevance_score"] != 0:
-            #     # Normalize relevance score to 0-1 range
-            #     raw_relevance = float(item["relevance_score"])
-            #     # If relevance score is already between 0-1, use it directly
-            #     if raw_relevance <= 1.0:
-            #         similarity = raw_relevance
-            #     else:
-            #         # Otherwise normalize it down to 0-1 range
-            #         similarity = min(raw_relevance / 10.0, 1.0)
-            #     print(f"  Using normalized relevance_score: {similarity}")
             else:
-                # If we don't have a proper similarity/relevance score, use a default value
-                # This ensures items with high harmfulness but low similarity still contribute
+                # If we don't have a proper similarity score, use a default value
                 similarity = 0.5
                 print(f"  Using default similarity: {similarity}")
             
