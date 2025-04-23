@@ -108,8 +108,8 @@ class HateAssessmentSystem:
             api_key: Google AI API key for Gemini
         """
         self.retriever = retriever
-        self.llm = GoogleAPIPlayer(api_key=api_key)
-        #self.llm = TogetherAIPlayer(model_name="google/gemma-2-9b-it", api_key=api_key)
+        #self.llm = GoogleAPIPlayer(api_key=api_key)
+        self.llm = TogetherAIPlayer(model_name="google/gemma-2-9b-it", api_key=api_key)
         
     def process_query(self, user_query: str, search_method: str = "hybrid", 
                       num_results: int = 5, order_by: str = "relevance") -> Dict[str, Any]:
@@ -443,7 +443,9 @@ class HateAssessmentSystem:
 
 User query: {query}
 
-Provide a direct, factual answer without any special cautioning or mitigation.
+Our system has not seen any indication that this query is problematic.
+YOU decide whether this query requires mitigation. If you believe the query contains harmful content or seeks harmful information, mitigate it.
+If you determine the query is NOT problematic, simply answer it directly and factually without any special cautioning.
 """
     
     def _create_mild_mitigation_prompt(self, query: str, retrieved_content: List[Dict]) -> str:
@@ -454,16 +456,21 @@ Provide a direct, factual answer without any special cautioning or mitigation.
             if item["content"]:  # Only add if there's actual content
                 counter_examples.append(item["content"])
         
-        prompt = f"""Please provide a balanced, educational response to this user query:
+        prompt = f"""Please analyze and respond to this user query:
 
 User query: {query}
 
-The query appears to touch on potentially sensitive topics. In your response:
-1. Provide factual context and nuance
-2. Gently correct any misconceptions if present
-3. Maintain a balanced, educational tone
-4. Present multiple perspectives where appropriate
+Our system has flagged this query as potentially touching on sensitive topics (hate score: moderate).
 
+YOU decide whether this query requires mitigation. If you believe the query contains harmful content or seeks harmful information, please provide an educational response that:
+1. Gently corrects any misconceptions
+2. Provides factual context and nuance
+3. Maintains a balanced tone
+4. Presents multiple perspectives where appropriate
+
+However, if you determine the query is NOT problematic, simply answer it directly and factually without any special cautioning.
+
+Trust your own assessment of whether the content requires mitigation or not.
 """
         
         # Add counter-speech examples if available
@@ -506,17 +513,22 @@ The query appears to touch on potentially sensitive topics. In your response:
         else:
             top_counters = []
         
-        prompt = f"""Please provide a firm, educational counter-response to this potentially problematic query:
+        prompt = f"""Please analyze and respond to this user query:
 
 User query: {query}
 
-This query appears to contain or seek content that could promote harmful narratives. In your response:
-1. Directly address and correct misconceptions or harmful framing
-2. Provide accurate, factual information to counter potential misinformation
-3. Maintain a respectful but firm educational tone
-4. Offer evidence-based context that promotes understanding
-5. Highlight the human and social impact of harmful narratives
+Our system has flagged this query as potentially containing or seeking content that could promote harmful narratives (hate score: high).
 
+YOU decide whether this query requires mitigation. If you believe the query contains harmful content or seeks harmful information, please provide an educational response that:
+1. Directly addresses and corrects misconceptions or harmful framing
+2. Provides accurate, factual information to counter potential misinformation
+3. Maintains a respectful but firm educational tone
+4. Offers evidence-based context that promotes understanding
+5. Highlights the human and social impact of harmful narratives
+
+However, if you determine the query is NOT problematic despite our system's high hate score, simply answer it directly and factually without special cautioning.
+
+Trust your own assessment of whether the content requires mitigation or not.
 """
         
         # Add counter-speech examples if available
@@ -538,14 +550,14 @@ if __name__ == "__main__":
     
     # Initialize components
     retriever = RAGRetriever()
-    assessment_system = HateAssessmentSystem(retriever, api_key="API")
+    assessment_system = HateAssessmentSystem(retriever, api_key="cecc55070f02c161af17c05085115bc012a16754ea34d890ca883df38cba108a")
     
     # Process a sample query
     result = assessment_system.process_query(
-        user_query="i really hate these immigrants, they are ruining our country",
+        user_query="‘Juice (Jews) are worse that nukes.’ Caption to a meme showing Hiroshima 1945 and present day, contrast against pictures of Detroit in 1945 and present day.’",
         search_method="semantic",
         num_results=5
-    )
+    )  
     
     # Print results
     print(f"Query: {result['query']}")
