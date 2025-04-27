@@ -1,3 +1,4 @@
+import math
 import time
 import google.generativeai as genai
 from typing import List, Dict, Any, Optional, Tuple
@@ -92,12 +93,12 @@ class HateAssessmentSystem:
     """
     
     # Define threshold constants
-    HATE_THRESHOLD_LOW = 5.0    # Below this is considered non-hateful
+    HATE_THRESHOLD_LOW = 4.0    # Below this is considered non-hateful
     HATE_THRESHOLD_HIGH = 7.0   # Above this requires stronger mitigation
     
     # Define score weights
-    SIMILARITY_WEIGHT = 0.55    # Weight for similarity score
-    HARMFULNESS_WEIGHT = 0.45   # Weight for harmfulness score
+    SIMILARITY_WEIGHT = 0.5    # Weight for similarity score
+    HARMFULNESS_WEIGHT = 0.5   # Weight for harmfulness score
     
     def __init__(self, retriever, api_key: str):
         """
@@ -111,8 +112,8 @@ class HateAssessmentSystem:
         #self.llm = GoogleAPIPlayer(api_key=api_key)
         self.llm = TogetherAIPlayer(model_name="google/gemma-2-9b-it", api_key=api_key)
         
-    def process_query(self, user_query: str, search_method: str = "hybrid", 
-                      num_results: int = 5, order_by: str = "relevance") -> Dict[str, Any]:
+    def process_query(self, user_query: str, search_method: str = "semantic", 
+                      num_results: int = 5, order_by: str = "similarity") -> Dict[str, Any]:
         """
         Process a user query through the entire assessment and response pipeline.
         
@@ -174,12 +175,12 @@ class HateAssessmentSystem:
             semantic_results = self.retriever.semantic_search(query, limit_per_layer=limit,order_by=order_by)
             
             # Debug print to check what's in the semantic results
-            print(f"Debug - Semantic search returned {len(semantic_results)} results")
-            if semantic_results:
-                first_result = semantic_results[0]
-                print(f"Debug - First semantic result keys: {first_result.keys()}")
-                if 'similarity_score' in first_result:
-                    print(f"Debug - First result similarity score: {first_result['similarity_score']}")
+            # print(f"Debug - Semantic search returned {len(semantic_results)} results")
+            # if semantic_results:
+            #     first_result = semantic_results[0]
+            #     print(f"Debug - First semantic result keys: {first_result.keys()}")
+            #     if 'similarity_score' in first_result:
+            #         print(f"Debug - First result similarity score: {first_result['similarity_score']}")
             
             # Combine and deduplicate results
             all_ids = set()
@@ -201,7 +202,7 @@ class HateAssessmentSystem:
                     break
         
         # Debug print to check combined results
-        print(f"Debug - Combined raw results: {len(raw_results)} items")
+        #print(f"Debug - Combined raw results: {len(raw_results)} items")
         
         # Identify synthetic hate content that lacks counter-speech
         synthetic_items_without_counter = []
@@ -215,14 +216,14 @@ class HateAssessmentSystem:
         
         # If we have synthetic items without counter content, find matching counters
         if synthetic_items_without_counter:
-            print(f"Debug - Found {len(synthetic_items_without_counter)} synthetic items without counter content")
+            #print(f"Debug - Found {len(synthetic_items_without_counter)} synthetic items without counter content")
             
             # Get topics from synthetic items
             topics = [item.get("topic") for item in synthetic_items_without_counter if item.get("topic")]
             unique_topics = list(set([t for t in topics if t]))
             
             if unique_topics:
-                print(f"Debug - Found these topics needing counters: {unique_topics}")
+                #print(f"Debug - Found these topics needing counters: {unique_topics}")
                 
                 # Fetch random counter content for each topic
                 topic_to_counter_map = {}
@@ -244,7 +245,7 @@ class HateAssessmentSystem:
                             import random
                             random_counter = random.choice(counters)
                             topic_to_counter_map[topic] = random_counter
-                            print(f"Debug - Found counter for topic '{topic}'")
+                            #print(f"Debug - Found counter for topic '{topic}'")
                     except Exception as e:
                         print(f"Error fetching counters for topic {topic}: {e}")
                 
@@ -258,7 +259,7 @@ class HateAssessmentSystem:
                         item["directness"] = counter.get("directness", 0)
                         item["evidence_quality"] = counter.get("evidence_quality", 0)
                         item["persuasiveness"] = counter.get("persuasiveness", 0)
-                        print(f"Debug - Assigned counter to synthetic item with id {item.get('id')}")
+                        #print(f"Debug - Assigned counter to synthetic item with id {item.get('id')}")
         
         # Transform results to only include counter content while preserving metrics
         processed_results = []
@@ -291,18 +292,18 @@ class HateAssessmentSystem:
             processed_results.append(processed_item)
         
         # Debug processed results
-        print(f"Debug - Processed results: {len(processed_results)} items")
+        #print(f"Debug - Processed results: {len(processed_results)} items")
         if processed_results:
             first_proc = processed_results[0]
-            print(f"Debug - First processed keys: {first_proc.keys()}")
-            print(f"Debug - Processed similarity_score: {first_proc['similarity_score']}")
+            #print(f"Debug - First processed keys: {first_proc.keys()}")
+            #print(f"Debug - Processed similarity_score: {first_proc['similarity_score']}")
             
         return processed_results
     
     def _calculate_hate_score(self, query: str, retrieved_content: List[Dict]) -> Tuple[float, Dict]:
         """
-        Calculate a composite hate score based on retrieved content.
-        Works with counter-content that still contains metrics from original hate paragraphs.
+        Calculate a properly normalized hate score based on retrieved content,
+        with adjusted calibration for real-world score distributions.
         
         Args:
             query: User query
@@ -310,7 +311,7 @@ class HateAssessmentSystem:
             
         Returns:
             Tuple containing:
-            - composite hate score (0-10 scale)
+            - calibrated hate score (0-10 scale)
             - assessment details dictionary
         """
         if not retrieved_content:
@@ -318,63 +319,80 @@ class HateAssessmentSystem:
         
         # Extract relevant scores from each retrieved item
         item_scores = []
+        
         for i, item in enumerate(retrieved_content):
-            # Debug - print each item's relevant metrics
-            print(f"Debug - Item {i} metrics:")
-            print(f"  similarity_score: {item.get('similarity_score')}")
-            #print(f"  relevance_score: {item.get('relevance_score')}")
-            print(f"  quality_score: {item.get('quality_score')}")
-            
-            # Get harmfulness score directly from quality_score which contains the actual harmfulness
+            # Get harmfulness score from quality_score
             harmfulness = float(item.get("quality_score", 0))
             
-            # Get similarity or relevance score (default to 0 if not available)
-            similarity = 0.0
+            # Get similarity score
+            similarity = float(item.get("similarity_score", 0.5))
             
-            # First check for similarity_score from semantic search
-            if "similarity_score" in item and item["similarity_score"] is not None and item["similarity_score"] != 0:
-                similarity = float(item["similarity_score"])
-                print(f"  Using similarity_score: {similarity}")
-            else:
-                # If we don't have a proper similarity score, use a default value
-                similarity = 0.5
-                print(f"  Using default similarity: {similarity}")
-            
-            # Calculate weighted item score
-            weighted_score = (self.SIMILARITY_WEIGHT * similarity + 
-                             self.HARMFULNESS_WEIGHT * (harmfulness / 10.0)) * 10.0
-            
-            print(f"  Final weighted score: {weighted_score}")
+            # Raw weighted score calculation
+            raw_weighted_score = (self.SIMILARITY_WEIGHT * similarity + 
+                                self.HARMFULNESS_WEIGHT * (harmfulness / 10.0)) * 10.0
             
             item_scores.append({
                 "id": item.get("hate_paragraph_id", "unknown"),
                 "counter_id": item.get("counter_id", "unknown"),
                 "similarity": round(similarity, 2),
                 "harmfulness": round(harmfulness, 2),
-                "weighted_score": round(weighted_score, 2)
+                "raw_weighted_score": raw_weighted_score
             })
         
         # Sort by weighted score in descending order
-        item_scores.sort(key=lambda x: x["weighted_score"], reverse=True)
+        item_scores.sort(key=lambda x: x["raw_weighted_score"], reverse=True)
         
         # Take the top 3 scores (or fewer if there aren't 3)
         top_scores = item_scores[:min(3, len(item_scores))]
         
-        # Calculate the final score as the average of the top scores
-        final_score = sum(item["weighted_score"] for item in top_scores) / len(top_scores)
+        # Calculate the average raw score
+        raw_final_score = sum(item["raw_weighted_score"] for item in top_scores) / len(top_scores)
         
-        # Cap at 10.0
-        final_score = min(final_score, 10.0)
+        # ADJUSTED NORMALIZATION APPROACH
+        # Based on empirical observations that scores cluster at the low end
+        
+        # Theoretical range
+        KB_MIN_SCORE = 5.5
+        KB_MAX_SCORE = 10.0
+        
+        # Observed real-world range (adjust these based on your actual data)
+        # Setting a narrower observed range to better distribute scores
+        OBSERVED_MIN = 5.5
+        OBSERVED_MAX = 8.0  # Adjust this based on your actual maximum observed scores
+        
+        # Apply square root transformation to spread out lower values
+        transformed_score = (raw_final_score - OBSERVED_MIN) / (OBSERVED_MAX - OBSERVED_MIN)
+        transformed_score = max(0, min(transformed_score, 1))  # Clamp to 0-1
+        
+        # Apply power transformation to spread values across range
+        # Using square root to give more weight to lower values
+        calibrated_score = math.sqrt(transformed_score) * 10
+        
+        # Ensure we have a minimum non-zero score for any relevant match
+        if len(retrieved_content) > 0 and calibrated_score < 2:
+            calibrated_score = max(calibrated_score, 2.0)
+        
+        # Update the top scores with calibrated values
+        for item in top_scores:
+            transformed = (item["raw_weighted_score"] - OBSERVED_MIN) / (OBSERVED_MAX - OBSERVED_MIN)
+            transformed = max(0, min(transformed, 1))
+            item["calibrated_score"] = math.sqrt(transformed) * 10
         
         assessment_details = {
             "message": f"Evaluated {len(retrieved_content)} relevant counter-speech items",
+            "theoretical_range": {"min": KB_MIN_SCORE, "max": KB_MAX_SCORE},
+            "observed_range": {"min": OBSERVED_MIN, "max": OBSERVED_MAX},
             "top_matches": top_scores,
-            "calculation_method": "Weighted average of top 3 matches",
+            "raw_score": raw_final_score,
+            "calibrated_score": calibrated_score,
+            "calculation_method": "Square root transformation with calibrated range",
             "weights": {
                 "similarity": self.SIMILARITY_WEIGHT,
                 "harmfulness": self.HARMFULNESS_WEIGHT
             }
         }
+        final_score = calibrated_score
+        #print(f"Debug - Final hate score: {final_score}")
         
         return final_score, assessment_details
     
@@ -465,7 +483,7 @@ Trust your own assessment of whether the content requires mitigation or not.
             prompt += "You may consider these reference perspectives in your response:\n\n"
             for i, example in enumerate(counter_examples[:2]):
                 prompt += f"Perspective {i+1}: {example}\n\n"
-        print(f"Debug - Mild mitigation prompt: {prompt}")
+        #print(f"Debug - Mild mitigation prompt: {prompt}")
         
         return prompt
     
@@ -512,10 +530,11 @@ YOU decide whether this query requires mitigation. If you believe the query cont
 3. Maintains a respectful but firm educational tone
 4. Offers evidence-based context that promotes understanding
 5. Highlights the human and social impact of harmful narratives
+6. Response must be 3-4 sentences (60-80 words) maximum
 
 However, if you determine the query is NOT problematic despite our system's high hate score, simply answer it directly and factually without special cautioning.
 
-Trust your own assessment of whether the content requires mitigation or not.
+Trust your own assessment of whether the content requires mitigation or not.(NO need to mention if you think the query is problematic or not)
 """
         
         # Add counter-speech examples if available
@@ -537,18 +556,18 @@ if __name__ == "__main__":
     
     # Initialize components
     retriever = RAGRetriever()
-    assessment_system = HateAssessmentSystem(retriever, api_key="cecc55070f02c161af17c05085115bc012a16754ea34d890ca883df38cba108a")
+    assessment_system = HateAssessmentSystem(retriever, api_key="API_KEY_HERE")
     
     # Process a sample query
     result = assessment_system.process_query(
-        user_query="‘Juice (Jews) are worse that nukes.’ Caption to a meme showing Hiroshima 1945 and present day, contrast against pictures of Detroit in 1945 and present day.’",
+        user_query="eligious minorities are a clear and present danger",
         search_method="semantic",
         num_results=5
     )  
     
     # Print results
-    print(f"Query: {result['query']}")
-    print(f"Hate Score: {result['hate_score']}")
-    print(f"Mitigation Level: {result['mitigation_level']}")
-    print("\nResponse:")
-    print(result['response'])
+    # print(f"Query: {result['query']}")
+    # print(f"Hate Score: {result['hate_score']}")
+    # print(f"Mitigation Level: {result['mitigation_level']}")
+    # print("\nResponse:")
+    # print(result['response'])

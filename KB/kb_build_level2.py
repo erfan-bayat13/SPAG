@@ -173,6 +173,6 @@ if __name__ == "__main__":
     
     # Import the generated content
     stats = extend_knowledge_base_with_generated_content(
-        jsonl_file_path="generated_hate_speech (1).jsonl",
+        jsonl_file_path="/Users/erfanbayat/Downloads/generated_hate_speech (2).jsonl",
         memgraph_connection=memgraph
     )

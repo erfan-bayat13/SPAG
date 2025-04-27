@@ -298,7 +298,7 @@ class RAGRetriever:
         
         return unique_results
         
-    def semantic_search(self, query_text: str, limit_per_layer: int = 5, similarity_threshold: float = 0.5, order_by: str = "similarity") -> List[Dict]:
+    def semantic_search(self, query_text: str, limit_per_layer: int = 5, similarity_threshold: float = 0.1, order_by: str = "similarity") -> List[Dict]:
         """
         Perform semantic search on hate content using vector search capabilities.
         Searches both debate-based content (layer 1) and synthetic content (layer 2).
