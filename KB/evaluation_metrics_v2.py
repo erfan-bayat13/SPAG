@@ -234,6 +234,16 @@ Format your response as JSON:
         Returns:
             Dictionary with parsed evaluation scores
         """
+        # Helper function to safely extract regex matches
+        def safe_extract_float(pattern, text, default=0.0):
+            match = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
+            if match and match.group(1):
+                try:
+                    return float(match.group(1))
+                except (ValueError, IndexError):
+                    return default
+            return default
+        
         # Try to extract JSON from the response
         try:
             # Find JSON in the response (it may be embedded in other text)
@@ -241,58 +251,96 @@ Format your response as JSON:
             json_match = re.search(r'\{.*\}', llm_response, re.DOTALL)
             if json_match:
                 json_str = json_match.group(0)
-                evaluation = json.loads(json_str)
-                
-                # Extract scores and feedback
-                result = {
-                    "directness": float(evaluation.get("directness", 0)),
-                    "evidence_quality": float(evaluation.get("evidence_quality", 0)),
-                    "persuasiveness": float(evaluation.get("persuasiveness", 0)),
-                    "relevance": float(evaluation.get("relevance", 0)),
-                    "effectiveness": float(evaluation.get("effectiveness", 0)),
-                    "feedback": evaluation.get("feedback", "No feedback provided")
-                }
-                
-                # Calculate overall score as average of metrics
-                result["overall_score"] = sum([
-                    result["directness"],
-                    result["evidence_quality"],
-                    result["persuasiveness"],
-                    result["relevance"],
-                    result["effectiveness"]
-                ]) / 5.0
-                
-                return result
-            
-        except (json.JSONDecodeError, AttributeError) as e:
-            print(f"Error parsing LLM response: {e}")
+                try:
+                    evaluation = json.loads(json_str)
+                    
+                    # Extract scores and feedback
+                    result = {
+                        "directness": float(evaluation.get("directness", 0)),
+                        "evidence_quality": float(evaluation.get("evidence_quality", 0)),
+                        "persuasiveness": float(evaluation.get("persuasiveness", 0)),
+                        "relevance": float(evaluation.get("relevance", 0)),
+                        "effectiveness": float(evaluation.get("effectiveness", 0)),
+                        "feedback": evaluation.get("feedback", "No feedback provided")
+                    }
+                    
+                    # Calculate overall score as average of metrics
+                    result["overall_score"] = sum([
+                        result["directness"],
+                        result["evidence_quality"],
+                        result["persuasiveness"],
+                        result["relevance"],
+                        result["effectiveness"]
+                    ]) / 5.0
+                    
+                    return result
+                except json.JSONDecodeError:
+                    # If JSON parsing fails, continue to regex approach
+                    pass
+        except (AttributeError, Exception) as e:
+            print(f"JSON extraction failed: {e}")
         
         # Fallback: try to extract scores using regex
         try:
-            directness = float(re.search(r'Directness.*?(\d+(?:\.\d+)?)', llm_response).group(1))
-            evidence_quality = float(re.search(r'Evidence Quality.*?(\d+(?:\.\d+)?)', llm_response).group(1))
-            persuasiveness = float(re.search(r'Persuasiveness.*?(\d+(?:\.\d+)?)', llm_response).group(1))
-            relevance = float(re.search(r'Relevance.*?(\d+(?:\.\d+)?)', llm_response).group(1))
-            effectiveness = float(re.search(r'Effectiveness.*?(\d+(?:\.\d+)?)', llm_response).group(1))
+            # Safely extract each metric
+            directness = safe_extract_float(r'Directness.*?(\d+(?:\.\d+)?)', llm_response)
+            evidence_quality = safe_extract_float(r'Evidence Quality.*?(\d+(?:\.\d+)?)', llm_response)
+            persuasiveness = safe_extract_float(r'Persuasiveness.*?(\d+(?:\.\d+)?)', llm_response)
+            relevance = safe_extract_float(r'Relevance.*?(\d+(?:\.\d+)?)', llm_response)
+            effectiveness = safe_extract_float(r'Effectiveness.*?(\d+(?:\.\d+)?)', llm_response)
             
-            # Try to extract feedback
+            # If we didn't find any scores with the specific format, try more generic patterns
+            if directness == 0 and evidence_quality == 0 and persuasiveness == 0 and relevance == 0 and effectiveness == 0:
+                # Try a more generic score pattern
+                directness = safe_extract_float(r'directness.*?(\d+(?:\.\d+)?)', llm_response)
+                evidence_quality = safe_extract_float(r'evidence.*?quality.*?(\d+(?:\.\d+)?)', llm_response)
+                persuasiveness = safe_extract_float(r'persuasive.*?(\d+(?:\.\d+)?)', llm_response)
+                relevance = safe_extract_float(r'relevan.*?(\d+(?:\.\d+)?)', llm_response)
+                effectiveness = safe_extract_float(r'effective.*?(\d+(?:\.\d+)?)', llm_response)
+            
+            # Try to extract feedback - using safe approach to avoid NoneType error
+            feedback = "No feedback extracted"  # Default
             feedback_match = re.search(r'feedback.*?["\']?(.*?)["\']?(?=\}|$)', llm_response, re.IGNORECASE | re.DOTALL)
-            feedback = feedback_match.group(1).strip() if feedback_match else "No feedback extracted"
+            if feedback_match and feedback_match.group(1):
+                feedback = feedback_match.group(1).strip()
             
-            result = {
-                "directness": directness,
-                "evidence_quality": evidence_quality,
-                "persuasiveness": persuasiveness,
-                "relevance": relevance,
-                "effectiveness": effectiveness,
-                "feedback": feedback,
-                "overall_score": (directness + evidence_quality + persuasiveness + relevance + effectiveness) / 5.0
-            }
+            # Check if we found any scores
+            scores_found = any([directness > 0, evidence_quality > 0, persuasiveness > 0, relevance > 0, effectiveness > 0])
             
-            return result
+            if not scores_found:
+                # One last attempt with simple digit extraction
+                potential_scores = re.findall(r'\b(\d+(?:\.\d+)?)\b', llm_response)
+                if len(potential_scores) >= 5:
+                    # Assume the first 5 numbers are our scores
+                    try:
+                        directness = float(potential_scores[0])
+                        evidence_quality = float(potential_scores[1])  
+                        persuasiveness = float(potential_scores[2])
+                        relevance = float(potential_scores[3])
+                        effectiveness = float(potential_scores[4])
+                        scores_found = True
+                    except (ValueError, IndexError):
+                        pass
             
-        except (AttributeError, ValueError) as e:
+            if scores_found:
+                result = {
+                    "directness": directness,
+                    "evidence_quality": evidence_quality,
+                    "persuasiveness": persuasiveness,
+                    "relevance": relevance,
+                    "effectiveness": effectiveness,
+                    "feedback": feedback,
+                    "overall_score": (directness + evidence_quality + persuasiveness + relevance + effectiveness) / 5.0
+                }
+                
+                return result
+                
+        except Exception as e:
             print(f"Error extracting scores from LLM response: {e}")
+            # Continue to default values
+        
+        # Get the log of what we tried to parse
+        print(f"Failed to parse LLM response. First 200 chars: {llm_response[:200]}")
         
         # If all parsing attempts fail, return default values
         return {
@@ -304,6 +352,7 @@ Format your response as JSON:
             "feedback": "Failed to extract evaluation",
             "overall_score": 0
         }
+    
     
     def calculate_toxicity_reduction(self, hate_toxicity: List[Dict[str, float]], 
                                     counter_toxicity: List[Dict[str, float]]) -> Dict[str, Any]:
@@ -897,25 +946,25 @@ if __name__ == "__main__":
     evaluator = HateCounterEvaluator(
         perspective_api_key=os.environ.get("PERSPECTIVE_API_KEY"),
         together_api_key=os.environ.get("TOGETHER_API_KEY"),
-        llm_model_name="deepseek-ai/DeepSeek-R1-Distill-Llama-70B-free"
+        llm_model_name="meta-llama/Llama-3.3-70B-Instruct-Turbo"
     )
     
     # Run evaluation on MultitargetCONAN dataset
     results = evaluator.run_full_evaluation(
         dataset_path="/Users/erfanbayat/Documents/SPAG/KB/subsampled_data.csv",
-        output_path="/Users/erfanbayat/Downloads/full_eval/gemmaxgemma_results.json",
-        #sample_size=1,  # Use a small sample for testing
+        output_path="/Users/erfanbayat/Downloads/full_eval/mistralxgemma.json",
+        #sample_size=10,  # Use a small sample for testing
         search_method="semantic"
     )
     
     # Generate report
     evaluator.generate_comparison_report(
-        results_path="/Users/erfanbayat/Downloads/full_eval/gemmaxgemma_results.json",
-        report_path="/Users/erfanbayat/Downloads/full_eval/evaluation_report.md"
+        results_path="/Users/erfanbayat/Downloads/full_eval/mistralxgemma.json",
+        report_path="/Users/erfanbayat/Downloads/full_eval/mxg_evaluation_report.md"
     )
     
     # Export metrics to CSV
     evaluator.export_metrics_csv(
-        results_path="/Users/erfanbayat/Downloads/full_eval/gemmaxgemma_results.json",
-        csv_path="/Users/erfanbayat/Downloads/full_eval/evaluation_metrics.csv"
+        results_path="/Users/erfanbayat/Downloads/full_eval/mistralxgemma.json",
+        csv_path="/Users/erfanbayat/Downloads/full_eval/mxg_evaluation_metrics.csv"
     )

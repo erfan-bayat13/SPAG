@@ -110,6 +110,7 @@ class HateAssessmentSystem:
         """
         self.retriever = retriever
         #self.llm = GoogleAPIPlayer(api_key=api_key)
+        # mistralai/Mistral-7B-Instruct-v0.2
         self.llm = TogetherAIPlayer(model_name="google/gemma-2-9b-it", api_key=api_key)
         
     def process_query(self, user_query: str, search_method: str = "semantic", 
@@ -472,6 +473,9 @@ YOU decide whether this query requires mitigation. If you believe the query cont
 2. Provides factual context and nuance
 3. Maintains a balanced tone
 4. Presents multiple perspectives where appropriate
+5. Do not include disclaimers, warnings, or explanations about the nature of the content
+6. Response must be 3-4 sentences (60-80 words) maximum
+
 
 However, if you determine the query is NOT problematic, simply answer it directly and factually without any special cautioning.
 
@@ -534,7 +538,7 @@ YOU decide whether this query requires mitigation. If you believe the query cont
 
 However, if you determine the query is NOT problematic despite our system's high hate score, simply answer it directly and factually without special cautioning.
 
-Trust your own assessment of whether the content requires mitigation or not.(NO need to mention if you think the query is problematic or not)
+Trust your own assessment of whether the content requires mitigation or not.
 """
         
         # Add counter-speech examples if available
@@ -556,7 +560,7 @@ if __name__ == "__main__":
     
     # Initialize components
     retriever = RAGRetriever()
-    assessment_system = HateAssessmentSystem(retriever, api_key="API_KEY_HERE")
+    assessment_system = HateAssessmentSystem(retriever, api_key="01b4b5157ff75e07c1699159bf109bcd434c6e929d88c7b38ce7066ef69d82be")
     
     # Process a sample query
     result = assessment_system.process_query(
@@ -566,8 +570,8 @@ if __name__ == "__main__":
     )  
     
     # Print results
-    # print(f"Query: {result['query']}")
-    # print(f"Hate Score: {result['hate_score']}")
-    # print(f"Mitigation Level: {result['mitigation_level']}")
-    # print("\nResponse:")
-    # print(result['response'])
+    print(f"Query: {result['query']}")
+    print(f"Hate Score: {result['hate_score']}")
+    print(f"Mitigation Level: {result['mitigation_level']}")
+    print("\nResponse:")
+    print(result['response'])
